@@ -13,7 +13,7 @@ def send_welcome_message(message):
         message.chat.id,
         (
             "Hello! Welcome.\n\n"
-            "📌 *Writing review costs 5,000 UZS*\n\n"
+            "📌 *Writing review costs 5,000 UZS for two writings*\n\n"
             "💳 *Card number:* 9860 1901 0702 0777\n\n"
             "📸 *Please*, take a picture or screenshot of the receipt and send it.\n\n"
             "✍️ Then send your writing for review."
