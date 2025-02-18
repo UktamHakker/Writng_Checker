@@ -6,9 +6,36 @@ from config import token, admin_ids
 # Initialize the bot
 bot = telebot.TeleBot(token)
 
+# Bot holati (ishlayotgan yoki to‘xtatilgan)
+bot_running = True
+
+# Foydalanuvchilarning bot ishlamayotgan paytda xabar jo‘natganlari
+offline_users = set()
+
+def admin_control_keyboard():
+    """Creates admin panel buttons for starting and stopping the bot."""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    start_button = types.KeyboardButton("▶ Botni ishga tushurish")
+    stop_button = types.KeyboardButton("⏹ Botni to‘xtatish")
+    markup.add(start_button, stop_button)
+    return markup
+
+def reply_to_user_button(user_id):
+    """Adds a reply button for the user."""
+    markup = types.InlineKeyboardMarkup()
+    reply_button = types.InlineKeyboardButton("✉️ Reply", callback_data=f"reply_{user_id}")
+    markup.add(reply_button)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome_message(message):
     """Sends a welcome message when the user issues the /start command."""
+    global bot_running
+    if not bot_running:
+        bot.send_message(message.chat.id, "❌ Bot hozir ish jarayonida emas. Iltimos, keyinroq urinib ko‘ring.")
+        offline_users.add(message.chat.id)
+        return
+    
     bot.send_message(
         message.chat.id,
         (
@@ -21,28 +48,36 @@ def send_welcome_message(message):
         parse_mode="Markdown"
     )
 
-def reply_to_user_button(user_id):
-    """Adds a reply button for the user."""
-    markup = types.InlineKeyboardMarkup()
-    reply_button = types.InlineKeyboardButton("✉️ Reply", callback_data=f"reply_{user_id}")
-    markup.add(reply_button)
-    return markup
-
-def admin_reply_keyboard():
-    """Creates reply buttons for the admin."""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    button_paid = types.KeyboardButton("Payment completed ✅")
-    button_not_paid = types.KeyboardButton("Payment not completed ❌")
-    button_task_1 = types.KeyboardButton("Submit Task 1 ✅")
-    button_task_2 = types.KeyboardButton("Submit Task 2 ✅")
-    markup.add(button_paid, button_not_paid, button_task_1, button_task_2)
-    return markup
+@bot.message_handler(func=lambda message: message.text in ["▶ Botni ishga tushurish", "⏹ Botni to‘xtatish"])
+def handle_bot_control(message):
+    """Handles bot start and stop commands from admin."""
+    global bot_running
+    if message.chat.id not in admin_ids:
+        bot.send_message(message.chat.id, "❌ Sizda bu amalni bajarish huquqi yo‘q!")
+        return
+    
+    if message.text == "▶ Botni ishga tushurish":
+        bot_running = True
+        bot.send_message(message.chat.id, "✅ Bot ishga tushdi!")
+        for user_id in offline_users:
+            bot.send_message(user_id, "✅ Bot ishga tushdi va siz adminga xabar jo‘natishingiz mumkin!")
+        offline_users.clear()
+    elif message.text == "⏹ Botni to‘xtatish":
+        bot_running = False
+        bot.send_message(message.chat.id, "⏹ Bot ish faoliyati to‘xtatildi!")
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
 def forward_to_admin(message):
     """Forwards all user messages to the admin."""
+    global bot_running
+    if not bot_running:
+        bot.send_message(message.chat.id, "❌ Bot hozir ish jarayonida emas. Iltimos, keyinroq urinib ko‘ring.")
+        offline_users.add(message.chat.id)
+        return
+    
     username = message.from_user.username or "No username"
     first_name = message.from_user.first_name or "No first name"
+    phone_number = message.contact.phone_number if message.contact else "No phone number"
     user_id = message.from_user.id
     message_type = message.content_type
 
@@ -52,33 +87,15 @@ def forward_to_admin(message):
         message_content = f"{message_type} file"
 
     save_message(user_id, username, message_type, message_content)
-
-    # Notify the user to wait for an admin response
     bot.send_message(message.chat.id, "Please wait for the admin's reply!")
 
     for admin_id in admin_ids:
-        if message.content_type == 'text':
-            bot.send_message(
-                admin_id,
-                (
-                    f"📩 New message:\n\n{message.text}\n\n"
-                    f"👤 User: @{username} (ID: {user_id})\n"
-                    f"📛 Name: {first_name}"
-                ),
-                reply_markup=reply_to_user_button(user_id)
-            )
-        else:
-            bot.forward_message(admin_id, message.chat.id, message.message_id)
-            bot.send_message(
-                admin_id,
-                (
-                    f"👤 User: @{username} (ID: {user_id})\n"
-                    f"📛 Name: {first_name}"
-                ),
-                reply_markup=reply_to_user_button(user_id)
-            )
-        # Show admin reply buttons
-        bot.send_message(admin_id, "Use the buttons below:", reply_markup=admin_reply_keyboard())
+        bot.send_message(
+            admin_id,
+            f"📩 New message from @{username} (ID: {user_id}):\n👤 Name: {first_name}\n📞 Phone: {phone_number}\n\n{message_content}",
+            reply_markup=reply_to_user_button(user_id)
+        )
+        bot.send_message(admin_id, "Use the buttons below:", reply_markup=admin_control_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reply_"))
 def handle_reply(call):
@@ -98,34 +115,6 @@ def send_reply_to_user(message, user_id):
         bot.send_message(message.chat.id, "✅ Reply sent to the user.")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Error: {e}")
-
-@bot.message_handler(func=lambda message: message.text in ["Payment completed ✅", "Payment not completed ❌"])
-def handle_admin_choice(message):
-    """Handles admin buttons for payment confirmation."""
-    if message.text == "Payment completed ✅":
-        response = "✅ Confirmed by admin: Payment completed."
-    elif message.text == "Payment not completed ❌":
-        response = "❌ Declined by admin: Payment not completed."
-    else:
-        return
-
-    if message.reply_to_message:
-        forwarded_from = message.reply_to_message.forward_from
-        if forwarded_from:
-            user_id = forwarded_from.id
-            try:
-                bot.send_message(user_id, response)
-                bot.send_message(message.chat.id, "✅ Reply sent to the user.")
-            except Exception as e:
-                bot.send_message(message.chat.id, f"❌ Error: {e}")
-
-@bot.message_handler(func=lambda message: message.text in ["Submit Task 1 ✅", "Submit Task 2 ✅"])
-def handle_bot_tasks(message):
-    """Handles task submission buttons."""
-    if message.text == "Submit Task 1 ✅":
-        bot.send_message(message.chat.id, "✅ Task 1 submission noted.")
-    elif message.text == "Submit Task 2 ✅":
-        bot.send_message(message.chat.id, "✅ Task 2 submission noted.")
 
 if __name__ == "__main__":
     import time
